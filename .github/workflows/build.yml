@@ -1374,29 +1374,54 @@ jobs:
           cp ../../../release.keystore .
 
           if [ -f build.gradle ]; then
-            sed -i 's/compileSdk [0-9]*/compileSdk 36/g' build.gradle
-            sed -i 's/targetSdk [0-9]*/targetSdk 36/g' build.gradle
-            sed -i 's/minSdkVersion [0-9]*/minSdkVersion 24/g' build.gradle
-            sed -i 's/minSdk [0-9]*/minSdk 24/g' build.gradle
+            # 1. Handle template BARU (flutter.minSdkVersion dkk) dulu
+            sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/g' build.gradle
+            sed -i 's/minSdk flutter\.minSdkVersion/minSdk 24/g' build.gradle
+            sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' build.gradle
+            sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g' build.gradle
+            sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g' build.gradle
+            sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g' build.gradle
+            # 2. Handle template LAMA (angka langsung) — pakai [0-9]\+ bukan [0-9]*
+            sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 36/g' build.gradle
+            sed -i 's/compileSdk [0-9]\+/compileSdk 36/g' build.gradle
+            sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 36/g' build.gradle
+            sed -i 's/targetSdk [0-9]\+/targetSdk 36/g' build.gradle
+            sed -i 's/minSdkVersion [0-9]\+/minSdkVersion 24/g' build.gradle
+            sed -i 's/minSdk [0-9]\+/minSdk 24/g' build.gradle
+            # 3. NDK
             if grep -q "ndkVersion" build.gradle; then
               sed -i 's/ndkVersion .*/ndkVersion "27.0.12077973"/g' build.gradle
             else
               sed -i '/android {/a \    ndkVersion "27.0.12077973"' build.gradle
             fi
+            # 4. Keystore
             sed -i 's|storeFile file(".*")|storeFile file("release.keystore")|g' build.gradle
             sed -i 's|storePassword ".*"|storePassword "password"|g' build.gradle
             sed -i 's|keyAlias ".*"|keyAlias "release"|g' build.gradle
             sed -i 's|keyPassword ".*"|keyPassword "password"|g' build.gradle
+
           elif [ -f build.gradle.kts ]; then
-            sed -i 's/compileSdk = [0-9]*/compileSdk = 36/g' build.gradle.kts
-            sed -i 's/targetSdk = [0-9]*/targetSdk = 36/g' build.gradle.kts
-            sed -i 's/minSdk = [0-9]*/minSdk = 24/g' build.gradle.kts
-            sed -i 's/minSdkVersion = [0-9]*/minSdkVersion = 24/g' build.gradle.kts
+            # 1. Handle template BARU (flutter.minSdkVersion dkk) dulu
+            sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 24/g' build.gradle.kts
+            sed -i 's/minSdkVersion = flutter\.minSdkVersion/minSdkVersion = 24/g' build.gradle.kts
+            sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g' build.gradle.kts
+            sed -i 's/compileSdkVersion = flutter\.compileSdkVersion/compileSdkVersion = 36/g' build.gradle.kts
+            sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g' build.gradle.kts
+            sed -i 's/targetSdkVersion = flutter\.targetSdkVersion/targetSdkVersion = 36/g' build.gradle.kts
+            # 2. Handle template LAMA (angka langsung) — pakai [0-9]\+ bukan [0-9]*
+            sed -i 's/compileSdk = [0-9]\+/compileSdk = 36/g' build.gradle.kts
+            sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 36/g' build.gradle.kts
+            sed -i 's/targetSdk = [0-9]\+/targetSdk = 36/g' build.gradle.kts
+            sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 36/g' build.gradle.kts
+            sed -i 's/minSdk = [0-9]\+/minSdk = 24/g' build.gradle.kts
+            sed -i 's/minSdkVersion = [0-9]\+/minSdkVersion = 24/g' build.gradle.kts
+            # 3. NDK
             if grep -q "ndkVersion" build.gradle.kts; then
               sed -i 's/ndkVersion = .*/ndkVersion = "27.0.12077973"/g' build.gradle.kts
             else
               sed -i '/android {/a \    ndkVersion = "27.0.12077973"' build.gradle.kts
             fi
+            # 4. Keystore
             sed -i 's|storeFile = file(".*")|storeFile = file("release.keystore")|g' build.gradle.kts
             sed -i 's|storeFile.set(file(".*"))|storeFile.set(file("release.keystore"))|g' build.gradle.kts
             sed -i 's|storePassword = ".*"|storePassword = "password"|g' build.gradle.kts
@@ -1546,11 +1571,11 @@ jobs:
               if [ -n "$NEEDED_MIN" ]; then
                 echo "🔧 Fix minSdk → $NEEDED_MIN"
                 if [[ "$GRADLE_FILE" == *.kts ]]; then
-                  sed -i "s/minSdk = [0-9]*/minSdk = $NEEDED_MIN/g" "$GRADLE_FILE"
-                  sed -i "s/minSdkVersion = [0-9]*/minSdkVersion = $NEEDED_MIN/g" "$GRADLE_FILE"
+                  sed -i "s/minSdk = [0-9]\+/minSdk = $NEEDED_MIN/g" "$GRADLE_FILE"
+                  sed -i "s/minSdkVersion = [0-9]\+/minSdkVersion = $NEEDED_MIN/g" "$GRADLE_FILE"
                 else
-                  sed -i "s/minSdkVersion [0-9]*/minSdkVersion $NEEDED_MIN/g" "$GRADLE_FILE"
-                  sed -i "s/minSdk [0-9]*/minSdk $NEEDED_MIN/g" "$GRADLE_FILE"
+                  sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $NEEDED_MIN/g" "$GRADLE_FILE"
+                  sed -i "s/minSdk [0-9]\+/minSdk $NEEDED_MIN/g" "$GRADLE_FILE"
                 fi
                 FIXED=true
               fi
@@ -1586,9 +1611,9 @@ jobs:
               if [ -n "$NEEDED_COMPILE" ]; then
                 echo "🔧 Fix compileSdk → $NEEDED_COMPILE"
                 if [[ "$GRADLE_FILE" == *.kts ]]; then
-                  sed -i "s/compileSdk = [0-9]*/compileSdk = $NEEDED_COMPILE/g" "$GRADLE_FILE"
+                  sed -i "s/compileSdk = [0-9]\+/compileSdk = $NEEDED_COMPILE/g" "$GRADLE_FILE"
                 else
-                  sed -i "s/compileSdk [0-9]*/compileSdk $NEEDED_COMPILE/g" "$GRADLE_FILE"
+                  sed -i "s/compileSdk [0-9]\+/compileSdk $NEEDED_COMPILE/g" "$GRADLE_FILE"
                 fi
                 FIXED=true
               fi
@@ -1601,9 +1626,9 @@ jobs:
               if [ -n "$NEEDED_TARGET" ]; then
                 echo "🔧 Fix targetSdk → $NEEDED_TARGET"
                 if [[ "$GRADLE_FILE" == *.kts ]]; then
-                  sed -i "s/targetSdk = [0-9]*/targetSdk = $NEEDED_TARGET/g" "$GRADLE_FILE"
+                  sed -i "s/targetSdk = [0-9]\+/targetSdk = $NEEDED_TARGET/g" "$GRADLE_FILE"
                 else
-                  sed -i "s/targetSdk [0-9]*/targetSdk $NEEDED_TARGET/g" "$GRADLE_FILE"
+                  sed -i "s/targetSdk [0-9]\+/targetSdk $NEEDED_TARGET/g" "$GRADLE_FILE"
                 fi
                 FIXED=true
               fi
