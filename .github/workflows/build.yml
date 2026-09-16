@@ -74,7 +74,7 @@ jobs:
           keytool -genkey -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=BuildBot, OU=Dev, O=BuildBot, L=City, S=State, C=ID"
 
       # ============================================================
-      # WEB2APK  (TIDAK DIUBAH — apa adanya)
+      # WEB2APK
       # ============================================================
       - name: Web2APK - Create root gradle files
         if: env.type == 'web2apk'
@@ -1376,6 +1376,13 @@ jobs:
           if [ -f build.gradle ]; then
             sed -i 's/compileSdk [0-9]*/compileSdk 36/g' build.gradle
             sed -i 's/targetSdk [0-9]*/targetSdk 36/g' build.gradle
+            sed -i 's/minSdkVersion [0-9]*/minSdkVersion 24/g' build.gradle
+            sed -i 's/minSdk [0-9]*/minSdk 24/g' build.gradle
+            if grep -q "ndkVersion" build.gradle; then
+              sed -i 's/ndkVersion .*/ndkVersion "27.0.12077973"/g' build.gradle
+            else
+              sed -i '/android {/a \    ndkVersion "27.0.12077973"' build.gradle
+            fi
             sed -i 's|storeFile file(".*")|storeFile file("release.keystore")|g' build.gradle
             sed -i 's|storePassword ".*"|storePassword "password"|g' build.gradle
             sed -i 's|keyAlias ".*"|keyAlias "release"|g' build.gradle
@@ -1383,6 +1390,13 @@ jobs:
           elif [ -f build.gradle.kts ]; then
             sed -i 's/compileSdk = [0-9]*/compileSdk = 36/g' build.gradle.kts
             sed -i 's/targetSdk = [0-9]*/targetSdk = 36/g' build.gradle.kts
+            sed -i 's/minSdk = [0-9]*/minSdk = 24/g' build.gradle.kts
+            sed -i 's/minSdkVersion = [0-9]*/minSdkVersion = 24/g' build.gradle.kts
+            if grep -q "ndkVersion" build.gradle.kts; then
+              sed -i 's/ndkVersion = .*/ndkVersion = "27.0.12077973"/g' build.gradle.kts
+            else
+              sed -i '/android {/a \    ndkVersion = "27.0.12077973"' build.gradle.kts
+            fi
             sed -i 's|storeFile = file(".*")|storeFile = file("release.keystore")|g' build.gradle.kts
             sed -i 's|storeFile.set(file(".*"))|storeFile.set(file("release.keystore"))|g' build.gradle.kts
             sed -i 's|storePassword = ".*"|storePassword = "password"|g' build.gradle.kts
@@ -1418,9 +1432,6 @@ jobs:
             echo "No gradle-wrapper.properties found, using default gradle."
           fi
 
-      # ============================================================
-      # DETEKSI FLUTTER VERSION (BERSIH)
-      # ============================================================
       - name: Detect Flutter version from pubspec
         if: env.type == 'flutter'
         id: flutter_detect
@@ -1430,7 +1441,6 @@ jobs:
           PUBSPEC="flutter-project/pubspec.yaml"
           [ -f "$PUBSPEC" ] || { echo "pubspec.yaml tidak ditemukan"; exit 1; }
 
-          # Ambil baris sdk di dalam blok environment (support semua format)
           SDK_LINE=$(awk '
             /^environment:/ { in_env=1; next }
             in_env && /^[^ ]/ { in_env=0 }
@@ -1439,11 +1449,9 @@ jobs:
 
           echo "SDK line: $SDK_LINE"
 
-          # Ambil angka X.Y pertama = lower bound
           DART_MIN=$(echo "$SDK_LINE" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
           echo "Dart min: $DART_MIN"
 
-          # Map Dart → Flutter
           case "$DART_MIN" in
             "3.0") FLUTTER_VERSION="3.10.0" ;;
             "3.1") FLUTTER_VERSION="3.13.0" ;;
@@ -1470,9 +1478,6 @@ jobs:
           channel: stable
           cache: true
 
-      # ============================================================
-      # BUILD FLUTTER APK (BERSIH — retry bump Flutter, tanpa edit pubspec)
-      # ============================================================
       - name: Build Flutter APK
         if: env.type == 'flutter'
         shell: bash
@@ -1494,19 +1499,11 @@ jobs:
             local CURRENT="$1"
             local IDX=-1
             for i in "${!FLUTTER_TIERS[@]}"; do
-              if [ "${FLUTTER_TIERS[$i]}" = "$CURRENT" ]; then
-                IDX=$i
-                break
-              fi
+              if [ "${FLUTTER_TIERS[$i]}" = "$CURRENT" ]; then IDX=$i; break; fi
             done
-            if [ $IDX -lt 0 ]; then
-              echo "3.35.2"
-              return
-            fi
+            [ $IDX -lt 0 ] && echo "3.35.2" && return
             local NEXT=$((IDX + 1))
-            if [ $NEXT -ge ${#FLUTTER_TIERS[@]} ]; then
-              NEXT=$((${#FLUTTER_TIERS[@]} - 1))
-            fi
+            [ $NEXT -ge ${#FLUTTER_TIERS[@]} ] && NEXT=$((${#FLUTTER_TIERS[@]} - 1))
             echo "${FLUTTER_TIERS[$NEXT]}"
           }
 
@@ -1516,14 +1513,121 @@ jobs:
             local NEW_ROOT="$HOME/flutter-sdk-$NEW_VER"
             rm -rf "$NEW_ROOT"
             if ! git clone -b "$NEW_VER" --depth 1 https://github.com/flutter/flutter.git "$NEW_ROOT" 2>/dev/null; then
-              echo "⚠️ Gagal clone Flutter $NEW_VER"
-              return 1
+              echo "⚠️ Gagal clone Flutter $NEW_VER"; return 1
             fi
+            git -C "$NEW_ROOT" fetch --depth 1 origin master 2>/dev/null || true
+            git -C "$NEW_ROOT" branch -f master origin/master 2>/dev/null || true
             export FLUTTER_ROOT="$NEW_ROOT"
             export PATH="$NEW_ROOT/bin:$PATH"
             flutter --version || return 1
             flutter precache --android 2>/dev/null || true
             return 0
+          }
+
+          fix_android_config_from_log() {
+            local LOG_FILE="$1"
+            local GRADLE_FILE=""
+            local FIXED=false
+
+            if [ -f "android/app/build.gradle.kts" ]; then
+              GRADLE_FILE="android/app/build.gradle.kts"
+            elif [ -f "android/app/build.gradle" ]; then
+              GRADLE_FILE="android/app/build.gradle"
+            else
+              echo "⚠️ Tidak ditemukan build.gradle"; return 1
+            fi
+
+            echo "📄 Memproses: $GRADLE_FILE"
+
+            # minSdk conflict
+            if grep -q "minSdkVersion.*cannot be smaller than version" "$LOG_FILE" 2>/dev/null; then
+              local NEEDED_MIN
+              NEEDED_MIN=$(grep -oP 'cannot be smaller than version \K[0-9]+' "$LOG_FILE" | head -n1)
+              if [ -n "$NEEDED_MIN" ]; then
+                echo "🔧 Fix minSdk → $NEEDED_MIN"
+                if [[ "$GRADLE_FILE" == *.kts ]]; then
+                  sed -i "s/minSdk = [0-9]*/minSdk = $NEEDED_MIN/g" "$GRADLE_FILE"
+                  sed -i "s/minSdkVersion = [0-9]*/minSdkVersion = $NEEDED_MIN/g" "$GRADLE_FILE"
+                else
+                  sed -i "s/minSdkVersion [0-9]*/minSdkVersion $NEEDED_MIN/g" "$GRADLE_FILE"
+                  sed -i "s/minSdk [0-9]*/minSdk $NEEDED_MIN/g" "$GRADLE_FILE"
+                fi
+                FIXED=true
+              fi
+            fi
+
+            # NDK conflict
+            if grep -q "requires Android NDK" "$LOG_FILE" 2>/dev/null; then
+              local NEEDED_NDK
+              NEEDED_NDK=$(grep -oP 'requires Android NDK \K[0-9.]+' "$LOG_FILE" | sort -V | tail -n1)
+              if [ -n "$NEEDED_NDK" ]; then
+                echo "🔧 Fix ndkVersion → $NEEDED_NDK"
+                if [[ "$GRADLE_FILE" == *.kts ]]; then
+                  if grep -q "ndkVersion" "$GRADLE_FILE"; then
+                    sed -i "s/ndkVersion = .*/ndkVersion = \"$NEEDED_NDK\"/g" "$GRADLE_FILE"
+                  else
+                    sed -i "/android {/a \    ndkVersion = \"$NEEDED_NDK\"" "$GRADLE_FILE"
+                  fi
+                else
+                  if grep -q "ndkVersion" "$GRADLE_FILE"; then
+                    sed -i "s/ndkVersion .*/ndkVersion \"$NEEDED_NDK\"/g" "$GRADLE_FILE"
+                  else
+                    sed -i "/android {/a \    ndkVersion \"$NEEDED_NDK\"" "$GRADLE_FILE"
+                  fi
+                fi
+                FIXED=true
+              fi
+            fi
+
+            # compileSdk conflict
+            if grep -q "requires compileSdk" "$LOG_FILE" 2>/dev/null; then
+              local NEEDED_COMPILE
+              NEEDED_COMPILE=$(grep -oP 'requires compileSdk \K[0-9]+' "$LOG_FILE" | head -n1)
+              if [ -n "$NEEDED_COMPILE" ]; then
+                echo "🔧 Fix compileSdk → $NEEDED_COMPILE"
+                if [[ "$GRADLE_FILE" == *.kts ]]; then
+                  sed -i "s/compileSdk = [0-9]*/compileSdk = $NEEDED_COMPILE/g" "$GRADLE_FILE"
+                else
+                  sed -i "s/compileSdk [0-9]*/compileSdk $NEEDED_COMPILE/g" "$GRADLE_FILE"
+                fi
+                FIXED=true
+              fi
+            fi
+
+            # targetSdk conflict
+            if grep -q "requires targetSdk" "$LOG_FILE" 2>/dev/null; then
+              local NEEDED_TARGET
+              NEEDED_TARGET=$(grep -oP 'requires targetSdk \K[0-9]+' "$LOG_FILE" | head -n1)
+              if [ -n "$NEEDED_TARGET" ]; then
+                echo "🔧 Fix targetSdk → $NEEDED_TARGET"
+                if [[ "$GRADLE_FILE" == *.kts ]]; then
+                  sed -i "s/targetSdk = [0-9]*/targetSdk = $NEEDED_TARGET/g" "$GRADLE_FILE"
+                else
+                  sed -i "s/targetSdk [0-9]*/targetSdk $NEEDED_TARGET/g" "$GRADLE_FILE"
+                fi
+                FIXED=true
+              fi
+            fi
+
+            # Gradle version conflict
+            if grep -q "Minimum supported Gradle version is" "$LOG_FILE" 2>/dev/null; then
+              local NEEDED_GRADLE
+              NEEDED_GRADLE=$(grep -oP 'Minimum supported Gradle version is \K[0-9.]+' "$LOG_FILE" | head -n1)
+              if [ -n "$NEEDED_GRADLE" ]; then
+                echo "🔧 Fix Gradle → $NEEDED_GRADLE"
+                sed -i "s|distributionUrl=.*|distributionUrl=https\\\\://services.gradle.org/distributions/gradle-${NEEDED_GRADLE}-all.zip|g" \
+                  android/gradle/wrapper/gradle-wrapper.properties 2>/dev/null || true
+                FIXED=true
+              fi
+            fi
+
+            if [ "$FIXED" = true ]; then
+              echo "✅ Config Android telah di-fix"
+              return 0
+            else
+              echo "ℹ️ Tidak ada config Android yang perlu di-fix"
+              return 1
+            fi
           }
 
           while [ $RETRY -lt $MAX_RETRIES ] && [ "$SUCCESS" = false ]; do
@@ -1533,30 +1637,41 @@ jobs:
             echo "=== Attempt $RETRY of $MAX_RETRIES (Flutter $FLUTTER_VERSION) ==="
             echo "================================================"
 
-            # Bersih-bersih sebelum tiap attempt
             rm -f pubspec.lock
             rm -rf build .dart_tool
+            rm -f /tmp/build.log /tmp/pubget.log
 
-            if flutter pub get; then
+            BUILD_FAILED=false
+
+            if ! flutter pub get 2>&1 | tee /tmp/pubget.log; then
+              echo "❌ flutter pub get gagal"
+              BUILD_FAILED=true
+            else
               echo "✅ flutter pub get sukses"
 
               if [ "$BUILD_MODE" = "release" ]; then
-                if flutter build apk --release; then
-                  SUCCESS=true
-                  break
+                if ! flutter build apk --release 2>&1 | tee /tmp/build.log; then
+                  BUILD_FAILED=true
                 fi
               else
-                if flutter build apk --debug; then
-                  SUCCESS=true
-                  break
+                if ! flutter build apk --debug 2>&1 | tee /tmp/build.log; then
+                  BUILD_FAILED=true
                 fi
               fi
-              echo "❌ flutter build apk gagal"
-            else
-              echo "❌ flutter pub get gagal"
+
+              if [ "$BUILD_FAILED" = false ]; then
+                SUCCESS=true
+                break
+              fi
             fi
 
-            # Naikkan versi Flutter
+            if [ -f /tmp/build.log ]; then
+              if fix_android_config_from_log /tmp/build.log; then
+                echo "🔄 Config di-fix, retry..."
+                continue
+              fi
+            fi
+
             OLD_VER="$FLUTTER_VERSION"
             FLUTTER_VERSION=$(bump_flutter_up "$FLUTTER_VERSION")
 
@@ -1576,6 +1691,8 @@ jobs:
           if [ "$SUCCESS" = false ]; then
             echo "❌ Build gagal setelah $RETRY percobaan"
             echo "Flutter version terakhir: $FLUTTER_VERSION"
+            echo "--- Log terakhir ---"
+            cat /tmp/build.log 2>/dev/null || true
             exit 1
           fi
 
