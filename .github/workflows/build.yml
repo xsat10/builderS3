@@ -69,6 +69,25 @@ jobs:
             echo "⚠️ build-config.json not found!"
           fi
 
+      - name: Download splash video from Catbox
+        if: env.type == 'web2apk'
+        run: |
+          mkdir -p build-assets
+          echo "Downloading splash video from Catbox..."
+          if curl -L --fail --retry 3 --retry-delay 5 --connect-timeout 20 \
+              -o build-assets/splash_video.mp4 \
+              "https://files.catbox.moe/zy6ci6.mp4"; then
+            if [ -s build-assets/splash_video.mp4 ] && file build-assets/splash_video.mp4 | grep -qiE "mp4|iso media"; then
+              echo "✅ Splash video downloaded successfully."
+              ls -lh build-assets/splash_video.mp4
+            else
+              echo "⚠️ Downloaded file is not a valid MP4, removing."
+              rm -f build-assets/splash_video.mp4
+            fi
+          else
+            echo "⚠️ Failed to download splash video from Catbox, splash will run without video."
+          fi
+
       - name: Generate keystore for signing
         run: |
           keytool -genkey -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=BuildBot, OU=Dev, O=BuildBot, L=City, S=State, C=ID"
@@ -644,6 +663,61 @@ jobs:
           }
           EOF
 
+      - name: Web2APK - Create CenterCropVideoView.java
+        if: env.type == 'web2apk'
+        run: |
+          cat > project/app/src/main/java/com/web2apk/app/CenterCropVideoView.java <<'EOF'
+          package com.web2apk.app;
+
+          import android.content.Context;
+          import android.util.AttributeSet;
+          import android.util.DisplayMetrics;
+          import android.widget.VideoView;
+
+          public class CenterCropVideoView extends VideoView {
+
+              public CenterCropVideoView(Context context) {
+                  super(context);
+              }
+
+              public CenterCropVideoView(Context context, AttributeSet attrs) {
+                  super(context, attrs);
+              }
+
+              public CenterCropVideoView(Context context, AttributeSet attrs, int defStyle) {
+                  super(context, attrs, defStyle);
+              }
+
+              @Override
+              protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                  super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                  DisplayMetrics metrics = getContext().getResources().getDisplayMetrics();
+                  int screenHeight = metrics.heightPixels;
+                  int screenWidth = metrics.widthPixels;
+                  int videoWidth = getMeasuredWidth();
+                  int videoHeight = getMeasuredHeight();
+
+                  // Center crop: scale video so it fills the screen, cropping excess
+                  if (videoWidth > 0 && videoHeight > 0) {
+                      float videoRatio = (float) videoWidth / (float) videoHeight;
+                      float screenRatio = (float) screenWidth / (float) screenHeight;
+
+                      if (videoRatio > screenRatio) {
+                          // Video is wider than screen: match height, expand width
+                          int scaledWidth = (int) (screenHeight * videoRatio);
+                          setMeasuredDimension(scaledWidth, screenHeight);
+                      } else {
+                          // Video is taller than screen: match width, expand height
+                          int scaledHeight = (int) (screenWidth / videoRatio);
+                          setMeasuredDimension(screenWidth, scaledHeight);
+                      }
+                  } else {
+                      setMeasuredDimension(screenWidth, screenHeight);
+                  }
+              }
+          }
+          EOF
+
       - name: Web2APK - Create SplashActivity.java
         if: env.type == 'web2apk'
         run: |
@@ -654,6 +728,7 @@ jobs:
           import android.animation.AnimatorListenerAdapter;
           import android.animation.ValueAnimator;
           import android.content.Intent;
+          import android.net.Uri;
           import android.os.Bundle;
           import android.os.Handler;
           import android.os.Looper;
@@ -670,6 +745,7 @@ jobs:
 
               private ImageView splashLogo;
               private TextView buildText, thanksText, loadingText;
+              private CenterCropVideoView splashVideoView;
 
               private View bar1, bar2, bar3, bar4, bar5;
 
@@ -694,6 +770,7 @@ jobs:
 
                   setContentView(R.layout.activity_splash);
 
+                  splashVideoView = findViewById(R.id.splashVideoView);
                   splashLogo = findViewById(R.id.splashLogo);
                   buildText = findViewById(R.id.buildText);
                   thanksText = findViewById(R.id.thanksText);
@@ -704,6 +781,8 @@ jobs:
                   bar3 = findViewById(R.id.bar3);
                   bar4 = findViewById(R.id.bar4);
                   bar5 = findViewById(R.id.bar5);
+
+                  setupSplashVideo();
 
                   buildText.setText("");
                   thanksText.setText("");
@@ -755,6 +834,29 @@ jobs:
                               }
                       );
                   }, 500);
+              }
+
+              private void setupSplashVideo() {
+                  if (splashVideoView == null) return;
+
+                  int videoResId = getResources().getIdentifier(
+                          "splash_video", "raw", getPackageName());
+
+                  if (videoResId != 0) {
+                      String uri = "android.resource://" + getPackageName() + "/" + videoResId;
+                      splashVideoView.setVideoURI(Uri.parse(uri));
+                      splashVideoView.setOnPreparedListener(mp -> {
+                          mp.setLooping(true);
+                          splashVideoView.start();
+                      });
+                      splashVideoView.setOnErrorListener((mp, what, extra) -> {
+                          // Jika video gagal diputar, abaikan (splash tetap berjalan)
+                          return true;
+                      });
+                  } else {
+                      // Tidak ada video, sembunyikan VideoView agar background default terlihat
+                      splashVideoView.setVisibility(View.GONE);
+                  }
               }
 
               private void animateLogo() {
@@ -904,6 +1006,13 @@ jobs:
                   destroyed = true;
                   stopWaveAnimation();
                   handler.removeCallbacksAndMessages(null);
+
+                  if (splashVideoView != null) {
+                      try {
+                          splashVideoView.stopPlayback();
+                      } catch (Exception ignored) {}
+                  }
+
                   super.onDestroy();
               }
           }
@@ -1012,6 +1121,17 @@ jobs:
               android:layout_width="match_parent"
               android:layout_height="match_parent"
               android:background="#101014">
+
+              <com.web2apk.app.CenterCropVideoView
+                  android:id="@+id/splashVideoView"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:layout_centerInParent="true" />
+
+              <View
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:background="#66000000" />
 
               <LinearLayout
                   android:id="@+id/splashContainer"
@@ -1165,7 +1285,7 @@ jobs:
           </resources>
           EOF
 
-      - name: Web2APK - Apply URL, app name, icons, and keystore
+      - name: Web2APK - Apply URL, app name, icons, keystore, and splash video
         if: env.type == 'web2apk'
         run: |
           echo "URL from env: ${{ env.url }}"
@@ -1196,6 +1316,15 @@ jobs:
           cp project/app/src/main/res/mipmap-xhdpi/ic_launcher.png project/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
           cp project/app/src/main/res/mipmap-xxhdpi/ic_launcher.png project/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
           cp project/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png project/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+
+          mkdir -p project/app/src/main/res/raw
+          if [ -f build-assets/splash_video.mp4 ]; then
+            cp build-assets/splash_video.mp4 project/app/src/main/res/raw/splash_video.mp4
+            echo "✅ Splash video placed in res/raw/splash_video.mp4"
+            ls -lh project/app/src/main/res/raw/splash_video.mp4
+          else
+            echo "⚠️ Splash video not found in build-assets, splash will run without video."
+          fi
 
           rm -f project/app/debug.keystore
           keytool -genkey -v -keystore project/app/debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug, O=Android, C=US"
