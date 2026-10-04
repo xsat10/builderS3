@@ -1656,7 +1656,7 @@ jobs:
           echo "========================"
 
           BUILD_MODE="${{ env.build_type }}"
-          MAX_RETRIES=5
+          MAX_RETRIES=10
           RETRY=0
           SUCCESS=false
 
