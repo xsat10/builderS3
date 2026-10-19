@@ -24,7 +24,8 @@ jobs:
       - name: Install dependencies (ImageMagick, jq, unzip, curl)
         run: sudo apt-get update && sudo apt-get install -y imagemagick jq unzip curl
 
-      - name: Install Android SDK packages (34 + 36)
+      # >>> DIUBAH: tambah build-tools;35.0.0 untuk AGP 8.9+ <<<
+      - name: Install Android SDK packages (34 + 35 + 36)
         run: |
           set -e
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -38,11 +39,13 @@ jobs:
             "platforms;android-34" \
             "platforms;android-36" \
             "build-tools;34.0.0" \
+            "build-tools;35.0.0" \
             "build-tools;36.0.0" || true
           echo "=== Installed build-tools ==="
           ls $ANDROID_HOME/build-tools || true
           echo "=== Installed platforms ==="
           ls $ANDROID_HOME/platforms || true
+      # >>> END DIUBAH <<<
 
       - name: Install Gradle
         run: |
@@ -401,7 +404,7 @@ jobs:
                                   if (uri != null && uri.equals(url)) {
                                       return true;
                                   }
-                              }
+                            }
                           }
                       } finally {
                           cursor.close();
@@ -761,7 +764,7 @@ jobs:
 
               private static final float BAR_MIN_SCALE = 0.35f;
               private static final float BAR_MAX_SCALE = 1.0f;
-              private static final float BAR_PHASE_DELAY = 0.16f;
+              private static final float BAR_PSE_DELAY = 0.16f;
               private static final long WAVE_DURATION = 1200L;
 
               @Override
@@ -1045,7 +1048,7 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:nameandroid.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
               <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -1306,7 +1309,7 @@ jobs:
           mkdir -p project/app/src/main/res/mipmap-hdpi project/app/src/main/res/mipmap-mdpi project/app/src/main/res/mipmap-xhdpi project/app/src/main/res/mipmap-xxhdpi project/app/src/main/res/mipmap-xxxhdpi
 
           convert build-assets/icon.png -resize 72x72 project/app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert build-assets/icon.png -resize 48x48 project/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert bui-assets/icon.png -resize 48x48 project/app/src/main/res/mipmap-mdpi/ic_launcher.png
           convert build-assets/icon.png -resize 96x96 project/app/src/main/res/mipmap-xhdpi/ic_launcher.png
           convert build-assets/icon.png -resize 144x144 project/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
           convert build-assets/icon.png -resize 192x192 project/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
@@ -1627,7 +1630,7 @@ jobs:
             "3.4") FLUTTER_VERSION="3.22.0" ;;
             "3.5") FLUTTER_VERSION="3.24.0" ;;
             "3.6") FLUTTER_VERSION="3.27.0" ;;
-            "3.7") FLUTTER_VERSION="3.29.0" ;;
+          "3.7") FLUTTER_VERSION="3.29.0" ;;
             "3.8") FLUTTER_VERSION="3.32.0" ;;
             "3.9"|"4.0") FLUTTER_VERSION="3.35.2" ;;
             *) FLUTTER_VERSION="3.27.0" ;;
@@ -1727,6 +1730,85 @@ jobs:
             fi
 
             echo "📄 Memproses: $GRADLE_FILE"
+
+            # ============================================================
+            # [AGP HANDLING] — hanya aktif kalau log memang minta
+            # ============================================================
+            local CURRENT_AGP=""
+            if [ -f android/settings.gradle ]; then
+              CURRENT_AGP=$(grep -oP "id ['\"]com\.android\.application['\"] version ['\"]\K[0-9.]+" android/settings.gradle 2>/dev/null | head -n1)
+              [ -z "$CURRENT_AGP" ] && CURRENT_AGP=$(grep -oP "com\.android\.tools\.build:gradle:\K[0-9.]+" android/settings.gradle 2>/dev/null | head -n1)
+            fi
+            if [ -z "$CURRENT_AGP" ] && [ -f android/settings.gradle.kts ]; then
+              CURRENT_AGP=$(grep -oP 'id\("com\.android\.application"\) version "\K[0-9.]+' android/settings.gradle.kts 2>/dev/null | head -n1)
+            fi
+            if [ -z "$CURRENT_AGP" ] && [ -f android/build.gradle ]; then
+              CURRENT_AGP=$(grep -oP "com\.android\.tools\.build:gradle:\K[0-9.]+" android/build.gradle 2>/dev/null | head -n1)
+            fi
+            echo "ℹ️ AGP terdeteksi: ${CURRENT_AGP:-tidak ditemukan}"
+
+            # 1) RAISE — hanya kalau NEEDED > CURRENT (stateless, tidak mungkin loop)
+            if grep -q "requires Android Gradle plugin" "$LOG_FILE" 2>/dev/null && [ -n "$CURRENT_AGP" ]; then
+              local NEEDED_AGP
+              NEEDED_AGP=$(grep -oP 'requires Android Gradle plugin \K[0-9.]+' "$LOG_FILE" | sort -V | tail -n1)
+              if [ -n "$NEEDED_AGP" ]; then
+                local HIGHER
+                HIGHER=$(printf '%s\n%s\n' "$CURRENT_AGP" "$NEEDED_AGP" | sort -V | tail -n1)
+                if [ "$HIGHER" = "$NEEDED_AGP" ] && [ "$NEEDED_AGP" != "$CURRENT_AGP" ]; then
+                  echo "🔧 Fix AGP (raise): $CURRENT_AGP → $NEEDED_AGP"
+                  if [ -f android/settings.gradle ]; then
+                    sed -i -E "s/(id ['\"]com\.android\.application['\"] version ['\"])[0-9.]+/\1$NEEDED_AGP/g" android/settings.gradle
+                    sed -i -E "s/(com\.android\.tools\.build:gradle:)[0-9.]+/\1$NEEDED_AGP/g" android/settings.gradle
+                  fi
+                  if [ -f android/settings.gradle.kts ]; then
+                    sed -i -E "s/(id\(\"com\.android\.application\"\) version \")[0-9.]+/\1$NEEDED_AGP/g" android/settings.gradle.kts
+                  fi
+                  if [ -f android/build.gradle ]; then
+                    sed -i -E "s/(com\.android\.tools\.build:gradle:)[0-9.]+/\1$NEEDED_AGP/g" android/build.gradle
+                  fi
+                  touch /tmp/agp_was_raised
+                  FIXED=true
+                else
+                  echo "ℹ️ AGP $CURRENT_AGP sudah >= $NEEDED_AGP, tidak perlu raise"
+                fi
+              fi
+            fi
+
+            # 2) LOWER — hanya kalau error minta turun DAN belum pernah raise (anti-oscillation)
+            if grep -qE "(was removed in|removed in) (AGP|Android Gradle plugin) [0-9]" "$LOG_FILE" 2>/dev/null \
+               && [ -n "$CURRENT_AGP" ] \
+               && [ ! -f /tmp/agp_was_raised ]; then
+              local REMOVED_IN
+              REMOVED_IN=$(grep -oP "(was removed in|removed in) (AGP |Android Gradle plugin )\K[0-9.]+" "$LOG_FILE" | head -n1)
+              if [ -n "$REMOVED_IN" ]; then
+                local HIGHEST
+                HIGHEST=$(printf '%s\n%s\n' "$CURRENT_AGP" "$REMOVED_IN" | sort -V | tail -n1)
+                if [ "$HIGHEST" = "$CURRENT_AGP" ]; then
+                  local TARGET_AGP
+                  TARGET_AGP=$(echo "$REMOVED_IN" | awk -F. '{
+                    if ($3+0 > 0) print $1"."$2"."($3-1)
+                    else if ($2+0 > 0) print $1"."($2-1)".0"
+                    else if ($1+0 > 1) print ($1-1)".0.0"
+                    else print "1.0.0"
+                  }')
+                  echo "🔧 Fix AGP (lower): $CURRENT_AGP → $TARGET_AGP (API dihapus di AGP $REMOVED_IN)"
+                  if [ -f android/settings.gradle ]; then
+                    sed -i -E "s/(id ['\"]com\.android\.application['\"] version ['\"])[0-9.]+/\1$TARGET_AGP/g" android/settings.gradle
+                    sed -i -E "s/(com\.android\.tools\.build:gradle:)[0-9.]+/\1$TARGET_AGP/g" android/settings.gradle
+                  fi
+                  if [ -f android/settings.gradle.kts ]; then
+                    sed -i -E "s/(id\(\"com\.android\.application\"\) version \")[0-9.]+/\1$TARGET_AGP/g" android/settings.gradle.kts
+                  fi
+                  if [ -f android/build.gradle ]; then
+                    sed -i -E "s/(com\.android\.tools\.build:gradle:)[0-9.]+/\1$TARGET_AGP/g" android/build.gradle
+                  fi
+                  FIXED=true
+                fi
+              fi
+            fi
+            # ============================================================
+            # [END AGP HANDLING]
+            # ============================================================
 
             # minSdk conflict
             if grep -q "minSdkVersion.*cannot be smaller than version" "$LOG_FILE" 2>/dev/null; then
@@ -1893,7 +1975,7 @@ jobs:
           done
 
           if [ "$SUCCESS" = false ]; then
-            echo "❌ Build gagal setelah $RETRY percobaan"
+            echo "❌ Build gagal setelah $RETRY percoan"
             echo "Flutter version terakhir: $FLUTTER_VERSION"
             echo "--- Log terakhir ---"
             cat /tmp/build.log 2>/dev/null || true
@@ -1922,3 +2004,4 @@ jobs:
             project/app/build/outputs/apk/release/*.apk
             flutter-project/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
+
